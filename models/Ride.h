@@ -6,11 +6,7 @@
 #include "Driver.h"
 #include "Location.h"
 #include "../enums/RideStatus.h"
-
-// Forward-declare RideObserver — defined in Phase 5.
-// We plant the hook here so Ride knows observers exist,
-// but we don't depend on the full interface yet.
-class RideObserver;
+#include "../observers/RideObserver.h"  // now we include it for real
 
 class Ride {
 public:
@@ -27,7 +23,6 @@ public:
         , status_(RideStatus::REQUESTED)
         , fare_(0.0) {}
 
-    // Getters
     const std::string&           getId()     const { return id_; }
     std::shared_ptr<Rider>       getRider()  const { return rider_; }
     std::shared_ptr<Driver>      getDriver() const { return driver_; }
@@ -36,15 +31,19 @@ public:
     RideStatus                   getStatus() const { return status_; }
     double                       getFare()   const { return fare_; }
 
-    // Status & fare — set by RideManager (Phase 3)
     void setStatus(RideStatus status) { status_ = status; }
     void setFare(double fare)         { fare_ = fare; }
 
-    // Observer hooks — wired up in Phase 5
     void addObserver(std::shared_ptr<RideObserver> observer) {
         observers_.push_back(std::move(observer));
     }
-    void notifyObservers(); // Implemented in Phase 5 alongside RideObserver
+
+    // Now fully implemented — loops through all observers and tells them
+    void notifyObservers() {
+        for (auto& observer : observers_) {
+            observer->onStatusChange(id_, status_);
+        }
+    }
 
 private:
     std::string             id_;
@@ -55,6 +54,5 @@ private:
     RideStatus              status_;
     double                  fare_;
 
-    // Populated in Phase 5
     std::vector<std::shared_ptr<RideObserver>> observers_;
 };
