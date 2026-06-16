@@ -19,97 +19,158 @@
 #include "fare/SurgePricingDecorator.h"
 #include "fare/DiscountDecorator.h"
 #include <iostream>
+#include <string>
+
+// --- Helper: print a section divider ---
+void printSection(const std::string& title) {
+    std::cout << "\n";
+    std::cout << "========================================\n";
+    std::cout << "  " << title << "\n";
+    std::cout << "========================================\n";
+}
+
+// --- Helper: run a ride end to end ---
+void runRide(
+    RideManager& rm,
+    std::shared_ptr<Rider>  rider,
+    std::shared_ptr<Driver> driver,
+    Location pickup,
+    Location drop,
+    std::shared_ptr<FareCalculator> fareCalc)
+{
+    auto ride = rm.createRide(rider, driver, pickup, drop);
+
+    // Attach observers
+    ride->addObserver(std::make_shared<RiderNotificationObserver>(rider));
+    ride->addObserver(std::make_shared<DriverNotificationObserver>(driver));
+    ride->addObserver(std::make_shared<LoggingObserver>());
+
+    // Progress through full lifecycle
+    rm.updateStatus(ride->getId(), RideStatus::ACCEPTED);
+    rm.updateStatus(ride->getId(), RideStatus::IN_PROGRESS);
+    rm.updateStatus(ride->getId(), RideStatus::COMPLETED);
+
+    // Calculate and save fare
+    double fare = fareCalc->calculate(*ride);
+    ride->setFare(fare);
+    std::cout << "Final Fare: Rs." << fare << "\n";
+}
 
 int main() {
     UserManager&     um       = UserManager::getInstance();
     DispatchService& dispatch = DispatchService::getInstance();
     RideManager&     rm       = RideManager::getInstance();
 
-    // --- Create and register vehicles ---
+    printSection("SETUP: Registering Drivers & Riders");
+
+    // --- Vehicles ---
     auto v1 = VehicleFactory::createVehicle("V1", "KA-01-1111", VehicleType::SEDAN, 4);
     auto v2 = VehicleFactory::createVehicle("V2", "KA-01-2222", VehicleType::SUV,   6);
     auto v3 = VehicleFactory::createVehicle("V3", "KA-01-3333", VehicleType::AUTO,  3);
+    auto v4 = VehicleFactory::createVehicle("V4", "KA-01-4444", VehicleType::BIKE,  1);
 
-    // --- Create and register drivers ---
-    auto d1 = UserFactory::createDriver("D1", "Ramesh", "8001", v1, Location(12.97, 77.59, "Brigade Road"));
-    auto d2 = UserFactory::createDriver("D2", "Suresh", "8002", v2, Location(12.90, 77.65, "Koramangala"));
-    auto d3 = UserFactory::createDriver("D3", "Mahesh", "8003", v3, Location(12.99, 77.61, "Indiranagar"));
+    // --- Real Bangalore coordinates (1 degree lat ≈ 111 km) ---
+    // Distances will now be realistic
+    auto d1 = UserFactory::createDriver("D1", "Ramesh", "8001", v1,
+                Location(12.9716, 77.5946, "MG Road"));         // MG Road
+    auto d2 = UserFactory::createDriver("D2", "Suresh", "8002", v2,
+                Location(12.9352, 77.6245, "Koramangala"));      // Koramangala
+    auto d3 = UserFactory::createDriver("D3", "Mahesh", "8003", v3,
+                Location(12.9784, 77.6408, "Indiranagar"));      // Indiranagar
+    auto d4 = UserFactory::createDriver("D4", "Dinesh", "8004", v4,
+                Location(12.9121, 77.6446, "HSR Layout"));       // HSR Layout
 
     d1->updateRating(4.2);
     d2->updateRating(4.8);
     d3->updateRating(3.9);
+    d4->updateRating(4.5);
 
     um.registerDriver(d1);
     um.registerDriver(d2);
     um.registerDriver(d3);
+    um.registerDriver(d4);
 
     dispatch.registerDriver(d1);
     dispatch.registerDriver(d2);
     dispatch.registerDriver(d3);
+    dispatch.registerDriver(d4);
 
-    // --- Create and register riders ---
+    // --- Riders ---
     auto r1 = UserFactory::createRider("R1", "Arjun", "9001");
     auto r2 = UserFactory::createRider("R2", "Priya", "9002");
+    auto r3 = UserFactory::createRider("R3", "Karan", "9003");
 
     um.registerRider(r1);
     um.registerRider(r2);
+    um.registerRider(r3);
 
-    // --- Ride 1: Arjun books with Nearest strategy ---
-    std::cout << "\n=== Ride 1: Nearest Driver ===\n";
+    // -------------------------------------------------------
+    printSection("RIDE 1: Arjun | Nearest Driver | Base Fare");
+    // -------------------------------------------------------
     dispatch.setStrategy(std::make_shared<NearestDriverStrategy>());
 
-    Location pickup1(12.98, 77.60, "MG Road");
-    Location drop1(12.93, 77.68, "HSR Layout");
+    // Arjun is near MG Road — d1 (Ramesh) should be matched
+    Location pickup1(12.9720, 77.5950, "MG Road");
+    Location drop1(12.9352, 77.6245, "Koramangala");  // ~5.5 km
 
     auto driver1 = dispatch.findDriver(pickup1);
-    auto ride1   = rm.createRide(r1, driver1, pickup1, drop1);
+    auto fareCalc1 = std::make_shared<BaseFareCalculator>();
+    runRide(rm, r1, driver1, pickup1, drop1, fareCalc1);
 
-    ride1->addObserver(std::make_shared<RiderNotificationObserver>(r1));
-    ride1->addObserver(std::make_shared<DriverNotificationObserver>(driver1));
-    ride1->addObserver(std::make_shared<LoggingObserver>());
-
-    rm.updateStatus(ride1->getId(), RideStatus::ACCEPTED);
-    rm.updateStatus(ride1->getId(), RideStatus::IN_PROGRESS);
-    rm.updateStatus(ride1->getId(), RideStatus::COMPLETED);
-
-    // Calculate and save fare (base + surge)
-    auto calc1 = std::make_shared<SurgePricingDecorator>(
-                    std::make_shared<BaseFareCalculator>(), 1.5);
-    ride1->setFare(calc1->calculate(*ride1));
-
-    // --- Ride 2: Priya books with Best Rated strategy ---
-    std::cout << "\n=== Ride 2: Best Rated Driver ===\n";
+    // -------------------------------------------------------
+    printSection("RIDE 2: Priya | Best Rated Driver | Surge x1.5");
+    // -------------------------------------------------------
     dispatch.setStrategy(std::make_shared<BestRatedDriverStrategy>());
 
-    Location pickup2(12.95, 77.62, "Jayanagar");
-    Location drop2(12.88, 77.70, "Electronic City");
+    // Priya is in Indiranagar — d2 (Suresh, 4.8 rating) should be matched
+    Location pickup2(12.9784, 77.6408, "Indiranagar");
+    Location drop2(12.9121, 77.6446, "HSR Layout");   // ~7.5 km
 
-    auto driver2 = dispatch.findDriver(pickup2);
-    auto ride2   = rm.createRide(r2, driver2, pickup2, drop2);
+    auto driver2   = dispatch.findDriver(pickup2);
+    auto fareCalc2 = std::make_shared<SurgePricingDecorator>(
+                        std::make_shared<BaseFareCalculator>(), 1.5);
+    runRide(rm, r2, driver2, pickup2, drop2, fareCalc2);
 
-    ride2->addObserver(std::make_shared<RiderNotificationObserver>(r2));
-    ride2->addObserver(std::make_shared<LoggingObserver>());
+    // -------------------------------------------------------
+    printSection("RIDE 3: Karan | Nearest Driver | Surge x2 + Discount Rs.20");
+    // -------------------------------------------------------
+    dispatch.setStrategy(std::make_shared<NearestDriverStrategy>());
 
-    rm.updateStatus(ride2->getId(), RideStatus::ACCEPTED);
-    rm.updateStatus(ride2->getId(), RideStatus::IN_PROGRESS);
-    rm.updateStatus(ride2->getId(), RideStatus::COMPLETED);
+    // Karan is near HSR Layout
+    Location pickup3(12.9100, 77.6500, "HSR Layout");
+    Location drop3(12.8400, 77.6800, "Electronic City");  // ~9 km
 
-    // Calculate fare (base + discount)
-    auto calc2 = std::make_shared<DiscountDecorator>(
-                    std::make_shared<BaseFareCalculator>(), 2.0);
-    ride2->setFare(calc2->calculate(*ride2));
+    auto driver3 = dispatch.findDriver(pickup3);
 
-    // --- Summary ---
-    std::cout << "\n=== Ride Summary ===\n";
+    auto surgePart = std::make_shared<SurgePricingDecorator>(
+                        std::make_shared<BaseFareCalculator>(), 2.0);
+    auto fareCalc3 = std::make_shared<DiscountDecorator>(
+                        std::static_pointer_cast<FareCalculator>(surgePart), 20.0);
+    runRide(rm, r3, driver3, pickup3, drop3, fareCalc3);
+
+    // -------------------------------------------------------
+    printSection("FINAL SUMMARY");
+    // -------------------------------------------------------
     for (auto& rider : um.getAllRiders()) {
         std::cout << "\nRider: " << rider->getName() << "\n";
-        for (auto& ride : rm.getRidesForRider(rider->getId())) {
+        auto rides = rm.getRidesForRider(rider->getId());
+        if (rides.empty()) {
+            std::cout << "  No rides yet.\n";
+            continue;
+        }
+        for (auto& ride : rides) {
             std::cout << "  " << ride->getId()
                       << " | " << rideStatusToString(ride->getStatus())
-                      << " | Driver: " << ride->getDriver()->getName()
+                      << " | Driver: "  << ride->getDriver()->getName()
+                      << " | Vehicle: " << vehicleTypeToString(
+                                             ride->getDriver()->getVehicle()->getType())
                       << " | Fare: Rs." << ride->getFare() << "\n";
         }
     }
+
+    std::cout << "\n========================================\n";
+    std::cout << "  SwiftRide simulation complete!\n";
+    std::cout << "========================================\n";
 
     return 0;
 }

@@ -13,8 +13,11 @@ struct Location {
     // Euclidean distance — good enough for our in-memory simulation.
     // Real apps use Haversine (great-circle distance) for accuracy.
     double distanceTo(const Location& other) const {
-        double dx = latitude - other.latitude;
-        double dy = longitude - other.longitude;
-        return std::sqrt(dx * dx + dy * dy);
-    }
+        // 1 degree latitude ≈ 111 km
+        // 1 degree longitude ≈ 111 km * cos(latitude)
+        const double KM_PER_DEG = 111.0;
+        double dx = (latitude  - other.latitude)  * KM_PER_DEG;
+        double dy = (longitude - other.longitude) * KM_PER_DEG;
+        return std::sqrt(dx * dx + dy * dy); // result now in km
+}
 };
